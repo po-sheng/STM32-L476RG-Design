@@ -1,0 +1,259 @@
+	.syntax unified
+	.cpu cortex-m4
+	.thumb
+
+.data
+	user_stack: .zero 128
+
+.text
+	.global main
+	.equ DECODE_MODE,	0x09
+	.equ DISPLAY_TEST,	0x0F
+	.equ SCAN_LIMIT, 	0x0B
+	.equ INTENSITY,		0x0A
+	.equ SHUTDOWN,		0x0C
+
+	.equ DATA, 			0x20
+	.equ LOAD,			0x40
+	.equ CLOCK,			0x80
+
+	.equ RCC_AHB2ENR, 0x4002104C
+	.equ GPIOA_MODER, 0x48000000
+	.equ GPIOA_OTYPER, 0x48000004
+	.equ GPIOA_OSPEEDR, 0x48000008
+	.equ GPIOA_PUPDR, 0x4800000C
+	.equ GPIOA_ODR, 0x48000014
+	.equ GPIOA_IDR, 0x48000010
+
+	.equ GPIOC_MODER, 0x48000800
+	.equ GPIOC_OTYPER, 0x48000804
+	.equ GPIOC_OSPEEDR, 0x48000808
+	.equ GPIOC_PUPDR, 0x4800080C
+	.equ GPIOC_ODR, 0x48000814
+	.equ GPIOC_IDR, 0x48000810
+
+	.equ GPIOA_BASE, 0x48000000
+	.equ GPIO_BSRR_OFFSET, 0x18
+	.equ GPIO_BRR_OFFSET, 0x28
+
+main:
+	ldr r10, =user_stack	//get the address of the stack
+	add r10, 128			//to the head of stack
+	msr MSP, r10			//change MSP address
+	bl GPIO_init
+	bl max7219_init
+	ldr r2, =#0				//r2 represent the 7-seg bit counter
+	ldr r3, =#9				//7-seg bit counter mask
+	ldr r10, =#1			//button state
+	ldr r6, =#0				//r6 as fib num1
+	ldr r7, =#1				//r7 as fib num2
+	ldr r8, =#0				//r8 is a signal for if it read a non zero value from bit 8 to 1 on 7-seg
+	ldr r12, =#0			//r12 is a temp reg to count if button is pressed more than 1s
+	b loop					//do initial set to 0
+
+debounce:
+	ldr r4, =GPIOC_IDR
+	ldr r5, [r4]			//r5 is the IDR signal
+	ldr r9, =#200000
+	cmp r12, r9				//if press button more than 1s
+	bge reset				//if yes -> reset
+	cmp r10, 0				//r10 to record button state 0 for pressed
+	beq in_press			//in pressed state
+	cmp r5, 0x2000			//button state is in idle
+	beq debounce			//no signal
+	bne count 				//start counting clock cycle
+
+reset:
+	ldr r12, =#0			//reset the counter
+
+reset_count:
+	ldr r5, [r4]
+	cmp r5, 0x2000			//count if button is pull up
+	bne reset_count			//not pull up
+
+reset_judge:
+	add r12, 1				//counter plus 1
+	cmp r12, 250			//do reset pull up debounce
+	bne reset_count			//if not yet reach
+	ldr r6, =#0				//init fib num1
+	ldr r7, =#1				//init fib num2
+	ldr r10, =#1			//init button state to idle
+	ldr r12, =#0			//init reset counter
+	b loop
+
+in_press:					//in pressed state
+	cmp r5, 0x2000
+	beq count				//count pull signal
+	add r12, 1				//reset counter plus 1
+	bne debounce
+
+count:
+	add r11, 1				//r11 to record the debounnce count
+	cmp r10, 1
+	beq	idle_check			//check in idle state
+	cmp	r11, 250			//if count reach the threshold
+	bne debounce			//back to idle
+	mov r11, 0				//init counter
+	mov r10, 1				//change to idle state
+	ldr r12, =#0			//reset counter reset
+	b fib
+
+idle_check:					//check if button in idle state
+	cmp r11, 250
+	bne debounce			//not yet reach the threshold
+	mov r11, 0				//init counter
+	mov r10, 0				//button to pressed state
+	b debounce				//start counting pull up signal
+
+fib:
+	add r1, r6, r7
+	mov r6, r7				//num1 = num2
+	mov r7, r1				//num2 = num1 + num2
+	ldr r5, =#100000000
+	cmp r6, r5
+	bge	out_of_bound		//if num1 is out of bound
+	mov r12, r6				//r12 represent the temp reg for current number
+	b loop
+
+out_of_bound:
+	push {r2, r3,r6, r7, r8}//save the variable
+	ldr r2, =#8				//r2 is a reg for 7-seg bit counter
+out_of_bound_loop:
+	mov r0, r2				//save address
+	ldr r1, =#0xF			//data = blank
+	push {r2}
+	bl max7219_send
+	pop {r2}
+	sub r2, 1				//counter - 1
+	cmp r2, 2
+	bne out_of_bound_loop	//not yet reach the '-' bit
+end_loop:
+	ldr r0, =#2				//address
+	ldr r1, =#10			//data = '-'
+	bl max7219_send
+	ldr r0, =#1				//address
+	ldr r1, =#1				//data = '1'
+	bl max7219_send
+	pop {r2, r3, r6, r7, r8}
+	b debounce				//start catching reset signal
+
+get_bit_loop:
+	cmp r0, #1				//r0 is a bit counter
+	beq return_val			//finishing get the mask
+	mov r5, #10				//integer 10
+	mul r4, r4, r5			//r4 is a mask mult 10 rely on which bit's mask now (r0)
+	sub r0, #1
+	b get_bit_loop
+
+return_val:
+	bx lr					//got a mask in r4
+
+bit_num:
+	ldr r8, =#1				//set the first non zero signal to 1
+	sub r12, r4				//currrent number - mask
+	add r1, 1				//count current decimal bit
+	cmp r12, r4
+	bge bit_num
+	b start_print			//current number smaller than mask
+
+loop:
+	add r0, r2, #1			//r2 is the 7-seg counter
+	sub r0, r3, r0			//r0 is the address of current bit from 8 to 1
+	ldr r4, =#1				//init mask value
+	bl get_bit_loop			//get mask in r4
+	add r0, r2, #1
+	sub r0, r3, r0			//reget the address value
+	ldr r1, =#0				//init data value
+	cmp r12, r4
+	bge	bit_num				//if current decimal bit is not zero
+	cmp r2, 7
+	beq start_print			//if in last bit is a zero don't set data to blank
+	cmp r8, 1
+	beq start_print			//if the first non zero bit has occurred
+	mov r1, 0xF				//if not gave current bit's data to 0xF means blank
+start_print:				//start to print full 8 bit on 7-seg
+	push {r2, r3, r6, r7, r8}
+	bl max7219_send			//start sending address in r0 and data in r1
+	pop {r2, r3, r6, r7, r8}
+	add r2, r2, #1			//7-seg bit counter + 1
+	cmp r2, #8
+	bne loop				//not yet finish the 8 bit set
+	ldr r2, =#0				//init counter
+	ldr r8, =#0				//init non zero state
+	b debounce
+
+GPIO_init:
+	movs r0, #0x7
+	ldr r1, =RCC_AHB2ENR
+	str r0, [r1]
+
+	movs r0, #0x5400			//0101 0100 0000 0000
+	ldr r1, =GPIOA_MODER
+	ldr r2, [r1]
+	and r2, #0xFFFF03FF			//1111 1111 1111 1111 0000 0011 1111 1111
+	orrs r2, r2, r0
+	str r2, [r1]
+
+	movs r0, #0x0
+	ldr r1, =GPIOC_MODER
+	ldr r2, [r1]
+	and r2, #0xF3FFFFFF			//1111 0011 1111 1111 1111 1111 1111 1111
+	orrs r2, r2, r0
+	str r2, [r1]
+
+	movs r0, #0xA800			//1010 1000 0000 0000
+	ldr r1, =GPIOA_OSPEEDR
+	strh r0, [r1]
+	bx lr
+
+max7219_send:
+	lsl r0, r0, #8
+	add r0, r0, r1				//get full 16 bit to transfer to max7219
+	ldr r1, =#GPIOA_BASE
+	ldr r2, =#LOAD
+	ldr r3, =#DATA
+	ldr r4, =#CLOCK
+	ldr r5, =#GPIO_BSRR_OFFSET	//BSRR give 1 to make bit high volt in low_16_bit register ; give 0 no operation
+	ldr r6, =#GPIO_BRR_OFFSET	//BRR give 1 to make bit low volt in low_16_bit register ; give 0 no operation
+	mov r7, #16
+
+max7219_loop:
+	mov r8, #1
+	sub r9, r7, #1
+	lsl r8, r8, r9
+	str r4, [r1, r6]			//set PA7 (CLOCK) to 1 (low-volt)
+	tst r0, r8
+	beq bit_not_set				//if current bit is 0
+	str r3, [r1, r5]			//if not, set PA5 (DATA) to 1 (high-volt)
+	b if_done
+
+bit_not_set:
+	str r3, [r1, r6]			//current bit is 0, set PA5 (DATA) to 1 (low-volt)
+
+if_done:
+	str r4, [r1, r5]			//set PA7 (CLOCK) to 1 (high-volt)
+	subs r7, r7, #1
+	bgt max7219_loop			//not yet finish all 16 bits
+	str r2, [r1, r6]			//set PA6 (LOAD) to 1 (high-volt)
+	str r2, [r1, r5]			//set PA6 (LOAD) to 1 (low-volt)
+	bx lr
+
+max7219_init:
+	push {lr}
+	ldr r0, =#DECODE_MODE
+	ldr r1, =#0xFF					//decode in all 8 bit
+	bl max7219_send
+	ldr r0, =#DISPLAY_TEST
+	ldr r1, =#0x0
+	bl max7219_send
+	ldr r0, =#SCAN_LIMIT
+	ldr r1, =#0x7					//diaplay in all 8 bit
+	bl max7219_send
+	ldr r0, =#INTENSITY
+	ldr r1, =#0xA
+	bl max7219_send
+	ldr r0, =#SHUTDOWN
+	ldr r1, =#0x1
+	bl max7219_send
+	pop {pc}
+	bx lr
