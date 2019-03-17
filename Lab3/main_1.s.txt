@@ -1,0 +1,111 @@
+	.syntax unified
+	.cpu cortex-m4
+	.thumb
+
+.data
+	user_stack: .zero 128
+	expr_result: .word 0
+
+.text
+	.global main
+	postfix_expr: .asciz	"-100 10 20 + - 10 +"
+
+main:
+	ldr	r0, =postfix_expr	//get the address of the string
+	ldr r10, =user_stack	//get the address of the stack
+	add r10, 128			//to the head of stack
+	msr MSP, r10			//change MSP address
+	movs r2, #0				//init
+	movs r4, #0				//init
+	bl atoi
+	pop {r9}				//get the answer
+	ldr r8, =expr_result	//get "expr_result" address
+	str r9, [r8]
+
+
+program_end:
+	B	program_end
+
+atoi:
+	ldrb r1, [r0]			//read a byte from string address
+	cmp r1, #0				//if r1 = 0 -> end of string
+	beq end
+	cmp r1, #32				//if r1 = 32 -> it's a " "
+	beq stack
+	cmp r1, #43				//if r1 = 32 -> it's a "+"
+	beq sign
+	cmp r1, #45				//if r1 = 32 -> it's a "-"
+	beq sign
+	cmp r4, #1				//if there's a minus sign
+	bne normal
+	movs r2, 0				//init the neg sign cause by line 55
+	movs r4, 2				//it's a neg
+
+
+normal:						//if it's not minus sign
+	movs r3, #10			//integer 10
+	mul r2, r2, r3			//make current number multi by 10
+	sub r1, 48
+	add r2, r1
+	add r0, 1				//next address for string 
+	b atoi
+
+sign:						//if it is a sign
+	movs r4, 1				//r4=1 if it's a minus
+	movs r2, r1 			// r4=2 if it's a sign
+	add r0, 1				//next address
+	b atoi
+
+stack:						//if read a space
+	cmp r4, 1				//if it is a neg sign
+	beq judge_sign			
+	cmp r4, 2				//if it is not a minus sign 
+	bne pos					
+	movs r5, -1				//set integer -1
+	mul r2, r5				//multi by -1
+
+pos:					
+	push {r2}				//push anything but a sign
+	b no_action				
+
+judge_sign:					//deside whether it's a "+" or "-"
+	cmp r2, 43				//is a "+"
+	beq add					
+	cmp r2, 45				//is a "-"
+	beq sub
+	bne no_action			
+
+sub:
+	pop {r2,r3}				//pop last two number 
+	sub r4, r3, r2
+	push {r4}				//push back answer
+	b no_action
+
+add:
+	pop {r2,r3}				
+	add r4, r2, r3
+	push {r4}
+
+no_action:
+	add r0, 1				//next address
+	movs r2, 0				//init
+	movs r4, 0				//init
+	b atoi
+
+end:
+	cmp r2, 43				//the last time calculate 
+	beq add_end				
+	cmp r2, 45
+	beq sub_end
+sub_end:
+	pop {r2,r3}
+	sub r4, r3, r2
+	push {r4}
+	b final
+
+add_end:
+	pop {r2,r3}
+	add r4, r2, r3
+	push {r4}
+
+final:	bx LR
