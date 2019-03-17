@@ -1,0 +1,68 @@
+#include "stm32l476xx.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+#define SET_REG(REG, SELECT, VAL) {((REG)=((REG)&(~(SELECT))) | (VAL));};
+
+extern int delay_5ms();
+int counter = 0;
+
+void WriteToLCD(int input, int iscmd)	{
+	if(iscmd == 1)	{											// cmd or not
+		SET_REG(GPIOB->ODR, GPIO_ODR_ODR_13, 0);
+	}
+	else	{
+		SET_REG(GPIOB->ODR, GPIO_ODR_ODR_13, GPIO_ODR_ODR_13);
+	}
+	SET_REG(GPIOB->ODR, GPIO_ODR_ODR_14, 0);					// read mode
+
+	SET_REG(GPIOB->ODR, 0xFF, input);							// give 8 bit data
+
+	SET_REG(GPIOB->ODR, GPIO_ODR_ODR_15, GPIO_ODR_ODR_15);		// enable
+	delay_5ms();
+	SET_REG(GPIOB->ODR, GPIO_ODR_ODR_15, 0);
+	delay_5ms();
+
+}
+
+void SysTick_Handler()	{
+	counter = counter + 1;
+	if(counter == 16)	{
+		counter = 0;
+		WriteToLCD(0x01, 1);
+		WriteToLCD(0x80, 1);
+		WriteToLCD(0x31, 0);
+		WriteToLCD(0x30, 0);
+	}
+	else	{
+		WriteToLCD(0x1C, 1);
+	}
+}
+
+void init()	{
+	// SET keypad gpio OUTPUT
+	RCC->AHB2ENR = 0x7;
+
+	//Set PB0,1,2,3,4,5,6,7,13,14,15 as output mode	//0101 0111 1111 1111 0101 0101 0101 0101
+	SET_REG(GPIOB->MODER, 0xFC00FFFF, 0x54005555);
+	//Set PB0,1,2,3,4,5,6,7,13,14,15 as medium speed //0101 0100 0000 0000 0101 0101 0101 0101
+	SET_REG(GPIOB->OSPEEDR, 0xFC00FFFF, 0x54005555);
+	//set PB0,1,2,3,4,5,6,7,13,14,15 is Pull-down	//1010 1000 0000 0000 1010 1010 1010 1010
+	SET_REG(GPIOB->PUPDR, 0xFC00FFFF, 0xA800AAAA);
+
+	WriteToLCD(0x38, 1);		//function setting
+	WriteToLCD(0x06, 1);		//entering mode
+	WriteToLCD(0x0C, 1);		//display on
+	WriteToLCD(0x01, 1);		//clear screen
+	WriteToLCD(0x80, 1);		//move to top left
+
+}
+
+int main()	{
+	init();
+	WriteToLCD(0x31, 0);
+	WriteToLCD(0x30, 0);
+	SysTick_Config(1300000UL);
+	while(1) {}
+return 0;
+}
