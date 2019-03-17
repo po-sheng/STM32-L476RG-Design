@@ -1,0 +1,79 @@
+#include "stm32l476xx.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+#define SET_REG(REG, SELECT, VAL) {((REG)=((REG)&(~(SELECT))) | (VAL));};
+
+extern void GPIO_init();
+extern void delay_1s();
+
+int PLLN_num[5] = {16, 48, 40, 16, 40};
+int PLLM_num[5] = {7, 7, 3, 0, 0};
+int PLLR_num[5] = {1, 0, 0, 0, 0};
+
+void systemclock_config()	{
+	RCC->CR &= 0xFEFFFFFF;
+	while((RCC->CR & 0x02000000) != 0);
+	SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLSRC, RCC_PLLCFGR_PLLSRC_MSI);
+	SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLM, PLLM_num[0]<<4);
+	SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLN, PLLN_num[0]<<8);
+	SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLR, PLLR_num[0]<<25);
+	SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLREN, RCC_PLLCFGR_PLLREN);
+	SET_REG(RCC->CFGR, RCC_CFGR_SW, RCC_CFGR_SW_PLL);
+	RCC->CR |= RCC_CR_PLLON;
+	while((RCC->CR & RCC_CR_PLLRDY) == 0);
+	SET_REG(RCC->CFGR, RCC_CFGR_HPRE, 8<<4);
+	if((RCC->CR & RCC_CR_PLLRDY) == 0)
+		return;
+}
+
+int user_press_button()	{
+	static int count = 0, state = 0;
+	if(state == 0)	{
+		if((GPIOC->IDR & 0x2000) == 0)	{
+			count++;
+			if(count > 0)	{
+				state = 1;
+				count = 0;
+			}
+		}
+	}
+	else	{
+		if((GPIOC->IDR & 0x2000) != 0)	{
+			count++;
+			if(count > 0)	{
+				state = 0;
+				return 1;
+			}
+		}
+	}
+return 0;
+}
+
+int main (void)	{
+	systemclock_config();
+	GPIO_init();
+	int i = 0;
+	while(1)	{
+		if(user_press_button())	{
+			i++;
+			i %= 5;
+			SET_REG(RCC->CFGR, RCC_CFGR_SW, RCC_CFGR_SW_MSI);
+			RCC->CR &= 0xFEFFFFFF;
+			while((RCC->CR & 0x02000000) != 0);
+			SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLSRC, RCC_PLLCFGR_PLLSRC_MSI);
+			SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLM, PLLM_num[i]<<4);
+			SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLN, PLLN_num[i]<<8);
+			SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLR, PLLR_num[i]<<25);
+			SET_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLREN, RCC_PLLCFGR_PLLREN);
+			SET_REG(RCC->CFGR, RCC_CFGR_SW, RCC_CFGR_SW_PLL);
+			RCC->CR |= RCC_CR_PLLON;
+			while((RCC->CR & RCC_CR_PLLRDY) == 0);
+			SET_REG(RCC->CFGR, RCC_CFGR_HPRE, 8<<4);
+		}
+		GPIOA->BSRR = (1<<5);
+		delay_1s();
+		GPIOA->BRR = (1<<5);
+		delay_1s();
+	}
+}

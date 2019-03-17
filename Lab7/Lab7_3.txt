@@ -1,0 +1,86 @@
+#include "stm32l476xx.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+#define SET_REG(REG, SELECT, VAL) {((REG)=((REG)&(~(SELECT))) | (VAL));};
+#define TIM_COUNTERMODE_UP 0
+#define presc 100000
+#define PRESS 1
+#define NOT_PRESS 0
+extern void GPIO_init();
+
+void timer_init()	{
+	RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;
+	SET_REG(TIM2->CR1, TIM_CR1_DIR | TIM_CR1_CMS, TIM_COUNTERMODE_UP);
+	TIM2->ARR = (uint32_t)100;
+	TIM2->PSC = (uint32_t)presc;
+
+}
+
+void PWM_channel_init()	{
+	TIM2->CCR2 = 50;
+	SET_REG(TIM2->CCER, TIM_CCER_CC2E, 16);
+	//SET_REG(TIM2->CCMR1, TIM_CCMR1_OC2FE, 1);
+	//SET_REG(TIM2->CCMR1, TIM_CCMR1_OC2CE, 1);
+	//SET_REG(TIM2->CCMR1, TIM_CCMR1_OC2PE, 1);
+	SET_REG(TIM2->CCMR1, TIM_CCMR1_CC2S, 0);
+	SET_REG(TIM2->CCMR1, TIM_CCMR1_OC2M, TIM_CCMR1_OC2M_0 + TIM_CCMR1_OC2M_1 + TIM_CCMR1_OC2M_2);
+	//SET_REG(TIM2->DIER, TIM_DIER_TIE, 1);
+
+	TIM2->EGR = TIM_EGR_UG;
+}
+
+int main()	{
+	GPIO_init();
+	timer_init();
+	PWM_channel_init();
+	int col, row, press_stat, press_val, before_val = 0, table[4][4] = {{153, 115, 81, 0}, {/*136*/120, /*102*/86, /*76*/55, 0}, {/*121*/80, /*91*/56, 0, 0}, {-1, -2, 0, 0}};
+		while(1)	{
+			for(col=0; col<4; col++)	{
+				GPIOA->ODR = (GPIOA->ODR & ~(0xF<<6)) | (1<<(col+6))n84;
+				for(row=0; row<4; row++)	{
+					if((GPIOB->IDR) & (1<<(4+row)))	{
+						if(table[col][row]!=0)	{
+							press_stat = PRESS;
+							if(table[col][row] == -1)	{
+								if(TIM2->CCR2 < 90)	{
+									SET_REG(RCC->APB1ENR1, RCC_APB1ENR1_TIM2EN, 0);
+									TIM2->CCR2 += 5;
+									SET_REG(RCC->APB1ENR1, RCC_APB1ENR1_TIM2EN, RCC_APB1ENR1_TIM2EN);
+									TIM2->EGR = TIM_EGR_UG;
+								}
+							}
+							else if(table[col][row] == -2)	{
+								if(TIM2->CCR2 > 10)	{
+									SET_REG(RCC->APB1ENR1, RCC_APB1ENR1_TIM2EN, 0);
+									TIM2->CCR2 -= 5;
+									SET_REG(RCC->APB1ENR1, RCC_APB1ENR1_TIM2EN, RCC_APB1ENR1_TIM2EN);
+									TIM2->EGR = TIM_EGR_UG;
+								}
+							}
+							else	{
+								TIM2->CR1 |= TIM_CR1_CEN;
+								if(before_val != table[col][row])	{
+									press_val = table[col][row];
+									TIM2->PSC = table[col][row];
+								}
+							}
+						}
+					}
+				}
+				if(press_stat == PRESS)	{
+					before_val = press_val;
+				}
+				else	{
+					TIM2->CR1 &= ~TIM_CR1_CEN;
+					before_val = -1;
+				}
+			}
+			press_stat = NOT_PRESS;
+			//timervalue = TIM2->CNT;
+			/*if(timervalue < 50)
+				GPIOA->BRR = (1<<5);
+			if(timervalue >= 50)
+				GPIOA->BSRR = (1<<5);*/
+		}
+}

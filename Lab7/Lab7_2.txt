@@ -1,0 +1,94 @@
+#include "stm32l476xx.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+extern void GPIO_init();
+extern void max7219_init();
+extern void max7219_send(int r0, int r1);
+
+#define TIME_SEC 12.70
+#define SET_REG(REG, SELECT, VAL) {((REG)=((REG)&(~(SELECT))) | (VAL));};
+#define TIM_COUNTERMODE_UP 0
+#define TIM_ARR_VAL (TIME_SEC*100)
+#define MSI_DEFAULT_FREQ 4000000
+int sev_seg_val[10] = {0x7E, 0x30, 0x6D, 0x79, 0x33, 0x5B, 0x5F, 0x70, 0x7F, 0x7B};
+int sev_seg_val_point[10] = {0xFE, 0xB0, 0xED, 0xF9, 0xB3, 0xDB, 0xDF, 0xF0, 0xFF, 0xFB};
+
+void timer_init()	{
+	RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;
+	SET_REG(TIM2->CR1, TIM_CR1_DIR, TIM_COUNTERMODE_UP);
+	TIM2->ARR = (uint32_t)TIM_ARR_VAL;
+	TIM2->PSC = (uint32_t)TIME_SEC * MSI_DEFAULT_FREQ / TIM_ARR_VAL;
+	TIM2->EGR = TIM_EGR_UG;
+	for(int i=0; i<8; i++)	{
+		if(i == 5)	{
+			max7219_send(8-i, sev_seg_val_point[0]);
+		}
+		else if(i == 6 || i == 7)	{
+			max7219_send(8-i, sev_seg_val[0]);
+		}
+		else	{
+			max7219_send(8-i, 0);
+		}
+	}
+}
+
+void display(int dis_val)	{
+	int temp = 100000000, cur, state = 0, bit = 8;
+	if(dis_val > temp/10)	{
+		for(int i=0; i<8; i++)	{
+			if(i == 5)	{
+				max7219_send(8-i, sev_seg_val_point[0]);
+			}
+			else if(i == 6 || i == 7)	{
+				max7219_send(8-i, sev_seg_val[0]);
+			}
+			else	{
+				max7219_send(8-i, 0);
+			}
+		}
+	}
+	else	{
+		while(bit != 0)	{
+			temp /= 10;
+			cur = dis_val / temp;
+			dis_val %= temp;
+			if(state == 0 && cur == 0 && temp > 100)	{
+				max7219_send(bit, 0);
+			}
+			else	{
+				state = 1;
+				if(temp == 100)	{
+					max7219_send(3, sev_seg_val_point[cur]);
+				}
+				else	{
+					max7219_send(bit, sev_seg_val[cur]);
+				}
+			}
+			bit--;
+		}
+	}
+}
+
+void timer_start()	{
+	TIM2->CR1 |= TIM_CR1_CEN;
+	int pre_val = TIM_ARR_VAL;
+	while(1){
+		int timervalue = TIM2->CNT;
+		if(pre_val <= timervalue)	{
+			TIM2->CR1 &= ~TIM_CR1_CEN;
+			display(pre_val);
+			return;
+		}
+		//pre_val = timervalue;
+		int dis_val = TIME_SEC * 100 * timervalue / TIM_ARR_VAL;
+		display(dis_val);
+	}
+}
+
+int main()	{
+	GPIO_init();
+	max7219_init();
+	timer_init();
+	timer_start();
+}
